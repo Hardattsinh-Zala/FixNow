@@ -1,0 +1,360 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  PROVIDER
+  ADMIN
+}
+
+model User {
+  id                Int      @id @default(autoincrement())
+  name              String
+  email             String   @unique
+  phone             String   @unique
+  password          String
+  role              Role     @default(CUSTOMER)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+  isEmailVerified   Boolean  @default(false)
+  emailVerifyToken  String?  @unique
+  emailVerifyExpiry DateTime?
+  passwordResetToken String? @unique
+  passwordResetExpiry DateTime?
+
+  customer      Customer?
+  provider      Provider?
+  notifications Notification[]
+}
+
+model Customer {
+  userId            Int @id
+  profileUrl        String?
+  user              User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings          Booking[]
+  reviews           Review[]
+  appointmentHistory AppointmentHistory[]
+  serviceRequests   ServiceRequest[]
+}
+
+model Provider {
+  userId       Int @id
+  name         String
+  bio          String?
+  profileUrl   String?
+  address      String
+  city         String
+  pincode      String?
+  closingTime  String
+  openingTime  String
+  slotInterval Int      @default(30)
+  isActive     Boolean  @default(true)
+  verificationStatus String @default("PENDING")
+  latitude     Float?
+  longitude    Float?
+
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workers         Worker[]
+  offerings       WorkerService[]
+  bookings        Booking[]
+  reviews         Review[]
+  matchedRequests ServiceRequest[]
+  responses       WorkerResponse[]
+  timeSlots       TimeSlot[]
+}
+
+model Worker {
+  id                Int @id @default(autoincrement())
+  providerId        Int
+  phone             String
+  name              String
+  title             String
+  skills            String? @db.Text
+  certifications   String? @db.Text
+  isActive          Boolean @default(true)
+  profileUrl        String?
+  latitude          Float?
+  longitude         Float?
+  isOnline          Boolean @default(false)
+  locationUpdatedAt DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  provider       Provider @relation(fields: [providerId], references: [userId], onDelete: Cascade)
+  bookings       Booking[]
+  responses      WorkerResponse[]
+}
+
+enum ServiceCategory {
+  PLUMBING
+  ELECTRICAL
+  CARPENTRY
+  PAINTING
+  CLEANING
+  GARDENING
+  APPLIANCE_REPAIR
+  DOMESTIC_HELP
+  CAREGIVING
+  DRIVING
+  HOME_MAINTENANCE
+  OTHER
+}
+
+model WorkerService {
+  id           Int @id @default(autoincrement())
+  providerId   Int
+  name         String
+  category     ServiceCategory
+  description  String?
+  duration     Int
+  referencePrice Decimal @db.Decimal(10,2)
+  isActive     Boolean @default(true)
+
+  provider   Provider @relation(fields: [providerId], references: [userId], onDelete: Cascade)
+  bookings   Booking[]
+  responses  WorkerResponse[]
+}
+
+enum CancelledBy {
+  PROVIDER
+  CUSTOMER
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  ARRIVED
+  IN_SERVICE
+  AWAITING_PAYMENT
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PricingStatus {
+  NOT_SET
+  AGREED
+  PAID
+}
+
+model Booking {
+  id                 Int @id @default(autoincrement())
+  customerId         Int
+  providerId         Int
+  serviceId          Int
+  workerId           Int?
+  startTime          String
+  date               DateTime @db.Date
+  status             BookingStatus @default(PENDING)
+  pricingStatus      PricingStatus @default(NOT_SET)
+  agreedPrice        Decimal? @db.Decimal(10,2)
+  arrivedAt          DateTime?
+  pricingConfirmedAt DateTime?
+  cancelledBy        CancelledBy?
+  cancelledAt        DateTime?
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  customer       Customer @relation(fields: [customerId], references: [userId])
+  provider       Provider @relation(fields: [providerId], references: [userId])
+  service        WorkerService @relation(fields: [serviceId], references: [id])
+  worker         Worker? @relation(fields: [workerId], references: [id])
+  payment        Payment?
+  review         Review?
+  notification   Notification[]
+  appointmentHistory AppointmentHistory[]
+  otp            BookingOtp?
+  serviceRequest ServiceRequest?
+
+  @@index([providerId, date])
+  @@index([workerId, date])
+}
+
+model TimeSlot {
+  id         Int @id @default(autoincrement())
+  providerId Int
+  workerId   Int?
+  date       DateTime @db.Date
+  startTime  String
+  endTime    String
+  isBlocked  Boolean @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  provider Provider @relation(fields: [providerId], references: [userId], onDelete: Cascade)
+  @@unique([providerId, workerId, date, startTime])
+  @@index([providerId, date])
+  @@index([workerId, date])
+}
+
+model AppointmentHistory {
+  id         Int @id @default(autoincrement())
+  bookingId  Int
+  customerId Int
+  status     BookingStatus
+  changedAt  DateTime @default(now())
+  note       String?
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [userId])
+}
+
+enum PaymentStatus { 
+  PENDING 
+  PAID 
+  FAILED 
+  REFUNDED 
+}
+
+enum PaymentMethod { 
+  CASH 
+  CARD 
+  UPI 
+  ONLINE 
+}
+
+model Payment {
+  id            Int @id @default(autoincrement())
+  bookingId     Int @unique
+  amount        Decimal @db.Decimal(10,2)
+  method        PaymentMethod
+  status        PaymentStatus @default(PENDING)
+  transactionId String?
+  paidAt        DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  booking       Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+}
+
+model Review {
+  id         Int @id @default(autoincrement())
+  bookingId  Int @unique
+  customerId Int
+  providerId Int
+  rating     Int
+  comment    String? @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  booking  Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [userId])
+  provider Provider @relation(fields: [providerId], references: [userId])
+}
+
+enum NotificationType {
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  BOOKING_REMINDER
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  REVIEW_REQUEST
+  GENERAL
+}
+
+model Notification {
+  id        Int @id @default(autoincrement())
+  userId    Int
+  bookingId Int?
+  type      NotificationType
+  title     String
+  message   String @db.Text
+  isRead    Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  user    User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+}
+
+enum ServiceRequestStatus { 
+  PENDING 
+  BROADCASTING 
+  MATCHED 
+  EXPIRED 
+  CANCELLED 
+}
+
+model ServiceRequest {
+  id                 Int @id @default(autoincrement())
+  customerId         Int
+  category           ServiceCategory
+  latitude           Float
+  longitude          Float
+  radiusKm           Float
+  requestedDate      DateTime? @db.Date
+  requestedStartTime String?
+  status             ServiceRequestStatus @default(PENDING)
+  selectedProviderId Int?
+  selectedResponseId Int?
+  matchedBookingId   Int? @unique
+  wave               Int @default(1)
+  nextWaveAt         DateTime?
+  expiresAt          DateTime
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  customer       Customer @relation(fields: [customerId], references: [userId])
+  selectedProvider Provider? @relation(fields: [selectedProviderId], references: [userId])
+  matchedBooking Booking? @relation(fields: [matchedBookingId], references: [id])
+  responses      WorkerResponse[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([nextWaveAt])
+}
+
+enum WorkerResponseStatus { 
+  NOTIFIED 
+  VIEWED 
+  READY 
+  DECLINED 
+  EXPIRED 
+  SELECTED 
+  RELEASED 
+}
+
+model WorkerResponse {
+  id          Int @id @default(autoincrement())
+  requestId   Int 
+  providerId  Int 
+  serviceId   Int?
+  workerId    Int
+  status      WorkerResponseStatus @default(NOTIFIED)
+  distanceKm  Float
+  score       Float
+  notifiedAt  DateTime @default(now())
+  respondedAt DateTime?
+
+  request  ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  provider Provider @relation(fields: [providerId], references: [userId])
+  service  WorkerService? @relation(fields: [serviceId], references: [id])
+  worker   Worker @relation(fields: [workerId], references: [id])
+
+  @@unique([requestId, workerId])
+  @@index([providerId])
+  @@index([workerId])
+}
+
+model BlockedToken {
+  id        Int @id @default(autoincrement())
+  token     String @unique @db.VarChar(512)
+  expiresAt DateTime
+  blockedAt DateTime @default(now())
+  @@index([expiresAt])
+}
+
+model BookingOtp {
+  id        Int @id @default(autoincrement())
+  bookingId Int @unique
+  otp       String @db.VarChar(6)
+  expiresAt DateTime
+  used      Boolean @default(false)
+  createdAt DateTime @default(now())
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+}

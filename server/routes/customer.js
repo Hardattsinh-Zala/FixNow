@@ -1,0 +1,19 @@
+const express=require("express");
+const router=express.Router();
+const auth=require("../middlewares/auth-filter");
+const role=require("../middlewares/role-filter");
+const c=require("../controllers/customer-controller");
+const payment=require("../controllers/payment-controller");
+
+router.use(auth,role("CUSTOMER"));
+router.get("/profile",c.getCustomer);
+router.patch("/profile",c.editCustomer);
+router.get("/bookings",c.getBookings);
+router.post("/bookings",c.addBooking);
+router.patch("/bookings/:id/cancel",c.cancelBooking);
+router.post("/bookings/:id/review",c.addReview);
+router.get("/bookings/:id/payment-ready",c.confirmPricePaymentReady);
+router.post("/payment/order",payment.createOrder);
+router.post("/payment/verify",payment.verifyPayment);
+router.post("/payment/cash",payment.recordCashPayment);
+module.exports=router;
