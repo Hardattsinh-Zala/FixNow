@@ -1,4 +1,5 @@
 const prisma = require("../middlewares/prisma-filter");
+const crypto = require("crypto");
 const { getIO } = require("../sockets");
 
 const toMinutes = (t) => { const [h,m] = String(t).split(":").map(Number); return h*60+m; };
@@ -26,27 +27,47 @@ const updateProviderProfile = async (req,res,next) => {
 
 const listWorkers = async(req,res,next)=>{
   try{
-    const workers=await prisma.worker.findMany({where:{providerId:req.userData.id},orderBy:{name:"asc"}});
+    const workers=await prisma.worker.findMany({where:{providerId:req.userData.id},orderBy:{name:"asc"},include:{user:{select:{id:true,email:true,phone:true,role:true}}}});
     res.json({workers});
   }catch(e){next(e);}
 };
 
 const addWorker = async(req,res,next)=>{
   try{
-    const {name,phone,title,skills,certifications,profileUrl}=req.body;
-    const worker=await prisma.worker.create({data:{providerId:req.userData.id,name,phone,title:title||"Service professional",skills:skills||null,certifications:certifications||null,profileUrl:profileUrl||null}});
-    res.status(201).json({worker});
+    const {name,phone,email,title,skills,certifications,profileUrl,password,eShramUan,skillIndiaCertificate}=req.body;
+    if(!name||!phone||!email)return res.status(400).json({msg:"Name, phone and email are required for a worker account."});
+    const exists=await prisma.user.findFirst({where:{OR:[{email},{phone}]}});
+    if(exists)return res.status(409).json({msg:"A user with that email or phone already exists."});
+    const initialPassword=password||crypto.randomBytes(5).toString("base64url");
+    const worker=await prisma.$transaction(async tx=>{
+      const user=await tx.user.create({data:{name,email,phone,password:initialPassword,role:"WORKER"}});
+      return tx.worker.create({data:{providerId:req.userData.id,userId:user.id,name,phone,title:title||"Service professional",skills:skills||null,certifications:certifications||null,profileUrl:profileUrl||null,eShramUan:eShramUan||null,skillIndiaCertificate:skillIndiaCertificate||null},include:{user:{select:{id:true,email:true,phone:true}}}});
+    });
+    res.status(201).json({worker,initialPassword});
   }catch(e){next(e);}
 };
-
 const updateWorker = async(req,res,next)=>{
   try{
-    const worker=await prisma.worker.updateMany({where:{id:Number(req.params.id),providerId:req.userData.id},data:req.body});
-    if(!worker.count) return res.status(404).json({msg:"Worker not found."});
-    res.json({msg:"Worker updated."});
-  }catch(e){next(e);}
+    const id=Number(req.params.id);
+    const worker=await prisma.worker.findFirst({where:{id,providerId:req.userData.id}});
+    if(!worker)return res.status(404).json({msg:"Worker not found."});
+    const {name,phone,title,skills,certifications,profileUrl,isActive,email,password,eShramUan,skillIndiaCertificate,governmentVerificationStatus}=req.body;
+    const updated=await prisma.$transaction(async tx=>{
+      let userId=worker.userId;
+      if(!userId){
+        if(!email||!password)throw Object.assign(new Error("Email and password are required to activate the worker account."),{statusCode:400});
+        const exists=await tx.user.findFirst({where:{OR:[{email},{phone}]}}); 
+        if(exists)throw Object.assign(new Error("That email or phone is already in use."),{statusCode:409});
+        const user=await tx.user.create({data:{name:name||worker.name,email,phone:phone||worker.phone,password,role:"WORKER"}});
+        userId=user.id;
+      }else if(email||password){
+        await tx.user.update({where:{id:userId},data:{...(email?{email}:{}),...(password?{password}:{})}});
+      }
+      return tx.worker.update({where:{id},data:{...(userId?{userId}:{}),...(name?{name}:{}),...(phone?{phone}:{}),...(title?{title}:{}),...(skills!==undefined?{skills}:{}),...(certifications!==undefined?{certifications}:{}),...(profileUrl!==undefined?{profileUrl}:{}),...(eShramUan!==undefined?{eShramUan,governmentVerificationStatus:"PENDING",verificationCheckedAt:null}:{}),...(skillIndiaCertificate!==undefined?{skillIndiaCertificate,governmentVerificationStatus:"PENDING",verificationCheckedAt:null}:{}),...(governmentVerificationStatus!==undefined?{governmentVerificationStatus,verificationCheckedAt:new Date()}:{}),...(isActive!==undefined?{isActive:Boolean(isActive)}:{})},include:{user:{select:{id:true,email:true,phone:true,role:true}}}});
+    });
+    res.json({worker:updated});
+  }catch(e){if(e.statusCode)return res.status(e.statusCode).json({msg:e.message});next(e);}
 };
-
 const updateWorkerLocation = async(req,res,next)=>{
   try{
     const {isOnline,latitude,longitude}=req.body;
@@ -106,121 +127,6 @@ const updateOffering = async(req,res,next)=>{
   }catch(e){next(e);}
 };
 
-const materializeTimeSlots = async (req, res, next) => {
-  try {
-    const providerId = Number(req.params.id);
-    const workerId = req.query.workerId
-      ? Number(req.query.workerId)
-      : null;
-
-    const date = dateOnly(req.query.date || new Date());
-
-    if (!providerId) {
-      return res.status(400).json({ msg: "Invalid provider ID." });
-    }
-
-    if (!workerId) {
-      return res.status(400).json({ msg: "Worker ID is required." });
-    }
-
-    const provider = await prisma.provider.findUnique({
-      where: { userId: providerId }
-    });
-
-    if (!provider) {
-      return res.status(404).json({ msg: "Provider not found." });
-    }
-
-    const existing = await prisma.timeSlot.findMany({
-      where: {
-        providerId,
-        workerId,
-        date
-      },
-      orderBy: {
-        startTime: "asc"
-      }
-    });
-
-    if (existing.length === 0) {
-      const start = toMinutes(provider.openingTime);
-      const end = toMinutes(provider.closingTime);
-      const interval = provider.slotInterval || 30;
-
-      const data = [];
-
-      for (let m = start; m < end; m += interval) {
-        data.push({
-          providerId,
-          workerId,
-          date,
-          startTime: fmt(m),
-          endTime: fmt(Math.min(m + interval, end))
-        });
-      }
-
-      if (data.length) {
-        await prisma.timeSlot.createMany({
-          data,
-          skipDuplicates: true
-        });
-      }
-    }
-
-    const slots = await prisma.timeSlot.findMany({
-      where: {
-        providerId,
-        workerId,
-        date
-      },
-      orderBy: {
-        startTime: "asc"
-      }
-    });
-
-    const bookings = await prisma.booking.findMany({
-      where: {
-        providerId,
-        date,
-        status: {
-          notIn: ["CANCELLED", "COMPLETED", "NO_SHOW"]
-        },
-        workerId
-      },
-      include: {
-        service: {
-          select: {
-            duration: true
-          }
-        }
-      }
-    });
-
-    const result = slots.map(slot => {
-      const start = toMinutes(slot.startTime);
-      const end = toMinutes(slot.endTime);
-
-      const booked =
-        slot.isBlocked ||
-        bookings.some(booking => {
-          const bookingStart = toMinutes(booking.startTime);
-          const bookingEnd =
-            bookingStart + booking.service.duration;
-
-          return start < bookingEnd && end > bookingStart;
-        });
-
-      return {
-        ...slot,
-        available: !booked
-      };
-    });
-    
-    res.json({ slots: result });
-  } catch (e) {
-    next(e);
-  }
-};
 
 const getProviderBookings=async(req,res,next)=>{
   try{
@@ -254,4 +160,4 @@ const completeBooking=async(req,res,next)=>{
   }catch(e){next(e);}
 };
 
-module.exports={getProviderProfile,updateProviderProfile,listWorkers,addWorker,updateWorker,updateWorkerLocation,listOfferings,addOffering,updateOffering,materializeTimeSlots,getProviderBookings,markWorkerArrived,completeBooking};
+module.exports={getProviderProfile,updateProviderProfile,listWorkers,addWorker,updateWorker,updateWorkerLocation,listOfferings,addOffering,updateOffering,getProviderBookings,markWorkerArrived,completeBooking};

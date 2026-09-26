@@ -13,6 +13,8 @@ router.post("/bookings",c.addBooking);
 router.patch("/bookings/:id/cancel",c.cancelBooking);
 router.post("/bookings/:id/review",c.addReview);
 router.get("/bookings/:id/payment-ready",c.confirmPricePaymentReady);
+router.post("/bookings/:id/confirm-price",c.confirmPrice);
+router.post("/bookings/:id/dispute-price",c.disputePrice);
 router.post("/payment/order",payment.createOrder);
 router.post("/payment/verify",payment.verifyPayment);
 router.post("/payment/cash",payment.recordCashPayment);

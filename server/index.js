@@ -13,6 +13,7 @@ const adminRouter = require("./routes/admin");
 const publicProviderRouter = require("./routes/provider.public");
 const uploadRouter = require("./routes/upload");
 const broadcastRouter = require("./routes/broadcast");
+const workerRouter = require("./routes/worker");
 const errorFunc = require("./middlewares/error-filter");
 const cors = require("cors");
 const { initSocket } = require("./sockets");
@@ -47,6 +48,7 @@ app.use("/api/customer", customerRouter);
 app.use("/api/provider", providerRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/broadcast", broadcastRouter);
+app.use("/api/worker", workerRouter);
 app.use("/api/providers", publicProviderRouter);
 app.use("/api/upload", uploadRouter);
 

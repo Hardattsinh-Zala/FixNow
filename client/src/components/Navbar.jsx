@@ -6,12 +6,14 @@ import "./Navbar.css";
 export default function Navbar(){
  const {user,isLoggedIn,logout}=useAuth(); const nav=useNavigate();
  const provider=user?.role==="PROVIDER";
+ const worker=user?.role==="WORKER";
  return <header className="site-nav"><div className="container nav-inner">
   <Link className="brand" to="/">WORK/LOCAL<small>LIVE</small></Link>
   <nav className="nav-links">
-   <Link to="/providers">Find workers</Link>
-   {isLoggedIn&& !provider && <><Link to="/request">Request a worker</Link><Link to="/bookings">My jobs</Link></>}
+   {!provider && !worker && (<Link to="/providers">Find workers</Link>)}
+   {isLoggedIn&& !provider && !worker && <><Link to="/request">Request a worker</Link><Link to="/bookings">My jobs</Link></>}
    {provider && <Link to="/provider">Provider desk</Link>}
+   {worker && <Link to="/worker">Worker dashboard</Link>}
    <Link to="/about">About</Link>
   </nav>
   <div className="nav-actions">

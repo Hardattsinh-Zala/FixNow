@@ -37,8 +37,9 @@ const register = async (req, res, next) => {
 
 const login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
-    const user = await prisma.user.findUnique({ where: { email } });
+    const { email, phone, identifier, password } = req.body;
+    const loginId = identifier || email || phone;
+    const user = await prisma.user.findFirst({ where: { OR: [{ email: loginId }, { phone: loginId }] } });
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ msg: "Wrong email or password." });
     }

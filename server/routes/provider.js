@@ -15,10 +15,7 @@ router.patch("/workers/:id/location",c.updateWorkerLocation);
 router.get("/offerings",c.listOfferings);
 router.post("/offerings",c.addOffering);
 router.patch("/offerings/:id",c.updateOffering);
-router.get("/time-slots",c.materializeTimeSlots);
 router.get("/bookings",c.getProviderBookings);
-router.patch("/bookings/:id/arrive",c.markWorkerArrived);
-router.patch("/bookings/:id/complete",c.completeBooking);
 
 router.post("/requests/:requestId/responses/:responseId/ready",bc.readyForRequest);
 router.post("/requests/:requestId/responses/:responseId/decline",bc.declineRequest);

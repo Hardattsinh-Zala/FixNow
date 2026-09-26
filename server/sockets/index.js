@@ -58,7 +58,7 @@ function initSocket(httpServer) {
         }
     });
 
-    io.on("connection", (socket) => {
+    io.on("connection", async (socket) => {
         const { id, role } = socket.userData;
 
         // Every user gets a personal room, keyed by role so salon-only and
@@ -66,6 +66,12 @@ function initSocket(httpServer) {
         // use the same underlying User.id.
         if (role === "PROVIDER") {
             socket.join(`provider:${id}`);
+        } else if (role === "WORKER") {
+            socket.join(`worker-user:${id}`);
+            // The worker room is resolved by Worker.id so broadcasts do not expose
+            // the worker's login/user identifier to customers.
+            const worker = await prisma.worker.findUnique({where:{userId:id},select:{id:true}});
+            if(worker) socket.join(`worker:${worker.id}`);
         } else if (role === "CUSTOMER") {
             socket.join(`user:${id}`);
         }

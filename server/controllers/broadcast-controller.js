@@ -21,29 +21,42 @@ async function notifyWave(request, workers, wave){
   const ids=new Map(rows.map(r=>[r.workerId,r.id]));
   const io=getIO();
   for(const w of fresh){
-    io.to(`provider:${w.providerId}`).emit("service-request",{
+    const sockets=await io.in(`worker:${Number(w.workerId)}`).fetchSockets();
+  console.log(`[broadcast] worker:${w.workerId} sockets:`,sockets.length);
+  
+    const payload={
       requestId:request.id,responseId:ids.get(Number(w.workerId)),workerId:Number(w.workerId),
       workerName:w.workerName,workerTitle:w.workerTitle,category:request.category,
-      distanceKm:Number(w.distanceKm),expiresIn:WAVE_MS/1000
-    });
+      distanceKm:Number(w.distanceKm),score:Number(w.score),requestedDate:request.requestedDate,expiresIn:WAVE_MS/1000
+    };
+    io.to(`worker:${Number(w.workerId)}`).emit("service-request",payload);
+    // Cooperative receives the same event for oversight/analytics; it no longer accepts jobs.
+    io.to(`provider:${w.providerId}`).emit("service-request",payload);
   }
   return fresh.length;
 }
 
 async function createServiceRequest(req,res,next){
   try{
-    const {category,latitude,longitude,radiusKm=10,requestedDate,requestedStartTime}=req.body;
+    const {category,latitude,longitude,radiusKm=10,requestedDate}=req.body;
     if(!CATEGORIES.includes(category))return res.status(400).json({msg:`category must be one of: ${CATEGORIES.join(", ")}`});
     if(latitude==null||longitude==null)return res.status(400).json({msg:"Location is required."});
 
     const request=await prisma.serviceRequest.create({data:{
-      customerId:req.userData.id,category,latitude:Number(latitude),longitude:Number(longitude),radiusKm:Number(radiusKm),
-      requestedDate:requestedDate?new Date(requestedDate):null,requestedStartTime:requestedStartTime||null,
-      status:"BROADCASTING",wave:1,nextWaveAt:new Date(Date.now()+WAVE_MS),expiresAt:new Date(Date.now()+TTL_MS)
+      customerId: req.userData.id,
+      category,
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+      radiusKm: Number(radiusKm),
+      requestedDate: requestedDate?new Date(requestedDate):null,
+      status: "BROADCASTING",wave:1,nextWaveAt:new Date(Date.now()+WAVE_MS),expiresAt:new Date(Date.now()+TTL_MS)
     }});
-    const workers=await scoreWorkers(await findNearbyWorkers({latitude:Number(latitude),longitude:Number(longitude),radiusKm:Number(radiusKm),category}),Number(radiusKm));
+
+    const nearby=await findNearbyWorkers({latitude:Number(latitude),longitude:Number(longitude),radiusKm:Number(radiusKm),category});
+    console.log("[broadcast] nearby:",nearby.length);
+    const workers=await scoreWorkers(nearby,Number(radiusKm));
     const notified=await notifyWave(request,workers,1);
-    if(!notified){
+    if(!notified) {
       await prisma.serviceRequest.update({where:{id:request.id},data:{status:"EXPIRED",nextWaveAt:null}});
       return res.status(201).json({requestId:request.id,status:"EXPIRED",candidates:0});
     }
@@ -72,23 +85,18 @@ async function chooseWorker(req,res,next){
       const response=await tx.workerResponse.findUnique({where:{id:responseId},include:{service:true,worker:true}});
       if(!response||response.requestId!==requestId||response.status!=="READY")throw Object.assign(new Error("That worker is no longer available."),{statusCode:409});
 
-      let startDate;
-      let startTime=request.requestedStartTime;
-      if(request.requestedDate&&startTime){
-        startDate=new Date(request.requestedDate);
-      }else{
-        const delay=Math.min(60,Math.max(15,Math.ceil(((Number(response.distanceKm)||0)/20*60+10)/5)*5));
-        startDate=new Date(Date.now()+delay*60000);
-        startTime=`${String(startDate.getHours()).padStart(2,"0")}:${String(startDate.getMinutes()).padStart(2,"0")}`;
-      }
+      if(!request.requestedDate)throw Object.assign(new Error("A service day is required."),{statusCode:400});
+      const startDate=new Date(request.requestedDate);
       const service=response.service;
       if(!service)throw Object.assign(new Error("Selected worker did not choose a service."),{statusCode:409});
 
-      const existing=await tx.booking.findMany({where:{providerId:response.providerId,date:startDate,workerId:response.workerId,status:{notIn:["CANCELLED","COMPLETED","NO_SHOW"]}},include:{service:{select:{duration:true}}}});
-      const [h,m]=startTime.split(":").map(Number), begin=h*60+m,end=begin+service.duration;
-      if(existing.some(b=>begin<(Number(b.startTime.split(":")[0])*60+Number(b.startTime.split(":")[1])+b.service.duration)&&end>(Number(b.startTime.split(":")[0])*60+Number(b.startTime.split(":")[1]))))throw Object.assign(new Error("Worker became unavailable for that time."),{statusCode:409});
+      // Day-based scheduling: one worker can hold at most one active job per day.
+      const existing=await tx.booking.findFirst({
+        where:{providerId:response.providerId,date:startDate,workerId:response.workerId,status:{notIn:["CANCELLED","COMPLETED","NO_SHOW"]}}
+      });
+      if(existing)throw Object.assign(new Error("That worker is already booked for the selected day."),{statusCode:409});
 
-      const booking=await tx.booking.create({data:{customerId:request.customerId,providerId:response.providerId,serviceId:response.serviceId,workerId:response.workerId,startTime,date:startDate,status:"CONFIRMED",notes:"Confirmed by customer from a live service broadcast."},include:{worker:true,provider:true,service:true}});
+      const booking=await tx.booking.create({data:{customerId:request.customerId,providerId:response.providerId,serviceId:response.serviceId,workerId:response.workerId,date:startDate,status:"CONFIRMED",notes:"Confirmed by customer from a live service broadcast."},include:{worker:true,provider:true,service:true}});
       await tx.serviceRequest.update({where:{id:requestId},data:{status:"MATCHED",selectedProviderId:response.providerId,selectedResponseId:response.id,matchedBookingId:booking.id,nextWaveAt:null}});
       await tx.workerResponse.update({where:{id:response.id},data:{status:"SELECTED",respondedAt:new Date()}});
       await tx.workerResponse.updateMany({where:{requestId, id:{not:response.id},status:{in:["NOTIFIED","VIEWED","READY"]}},data:{status:"RELEASED",respondedAt:new Date()}});

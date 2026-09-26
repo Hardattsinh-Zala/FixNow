@@ -14,6 +14,7 @@ import CustomerBookings from "./pages/CustomerBookings";
 import ProviderDesk from "./pages/ProviderDesk";
 import ProviderBroadcast from "./pages/ProviderBroadcast";
 import About from "./pages/About";
+import WorkerDashboard from "./pages/WorkerDashboard";
 import "./App.css";
 
 export default function App(){
@@ -26,6 +27,7 @@ export default function App(){
    <Route path="/bookings" element={<ProtectedRoute role="CUSTOMER"><CustomerBookings/></ProtectedRoute>}/>
    <Route path="/provider" element={<ProtectedRoute role="PROVIDER"><ProviderDesk/></ProtectedRoute>}/>
    <Route path="/provider/requests" element={<ProtectedRoute role="PROVIDER"><ProviderBroadcast/></ProtectedRoute>}/>
+   <Route path="/worker" element={<ProtectedRoute role="WORKER"><WorkerDashboard/></ProtectedRoute>}/>
    <Route path="*" element={<Navigate to="/" replace/>}/>
   </Routes>
  </ToastProvider></SocketProvider></AuthProvider></BrowserRouter>

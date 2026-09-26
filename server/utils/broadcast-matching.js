@@ -11,13 +11,13 @@ async function findNearbyWorkers({ latitude, longitude, radiusKm, category }) {
       w.longitude,
       p.name AS providerName,
 
-      (6371 * acos(
+      (6371 * acos(LEAST(1, GREATEST(-1,
         cos(radians(${latitude})) *
         cos(radians(w.latitude)) *
         cos(radians(w.longitude) - radians(${longitude})) +
         sin(radians(${latitude})) *
         sin(radians(w.latitude))
-      )) AS distanceKm
+      )))) AS distanceKm
 
     FROM Worker w
 
@@ -51,40 +51,36 @@ function scoreCandidate(distanceKm, radiusKm, rating = 0) {
 }
 
 async function scoreWorkers(rows, radiusKm) {
-  const providerIds = [
-    ...new Set(rows.map((r) => Number(r.providerId)))
-  ];
+  if (!rows.length) return [];
+  const workerIds = rows.map(r => Number(r.workerId));
+  const now = Date.now();
+  const since = new Date(now - 7 * 24 * 60 * 60 * 1000);
+  const earnings = await prisma.booking.groupBy({
+    by: ["workerId"],
+    where: {workerId:{in:workerIds},status:"COMPLETED",createdAt:{gte:since}},
+    _sum: {agreedPrice:true}
+  });
+  const lastJobs = await prisma.booking.findMany({
+    where:{workerId:{in:workerIds},status:{in:["COMPLETED","AWAITING_PAYMENT","IN_SERVICE","ARRIVED"]}},
+    orderBy:{updatedAt:"desc"},
+    distinct:["workerId"],
+    select:{workerId:true,updatedAt:true}
+  });
+  const earnedMap = Object.fromEntries(earnings.map(x=>[Number(x.workerId),Number(x._sum.agreedPrice||0)]));
+  const lastMap = Object.fromEntries(lastJobs.map(x=>[Number(x.workerId),x.updatedAt]));
+  const targetWeekly = Number(process.env.WORKER_TARGET_WEEKLY_EARNINGS || 5600);
 
-  const ratings = providerIds.length
-    ? await prisma.review.groupBy({
-        by: ["providerId"],
-        where: {
-          providerId: {
-            in: providerIds
-          }
-        },
-        _avg: {
-          rating: true
-        }
-      })
-    : [];
-
-  const map = Object.fromEntries(
-    ratings.map((r) => [
-      r.providerId,
-      r._avg.rating || 0
-    ])
-  );
-
-  return rows.map((r) => ({
-    ...r,
-    score: scoreCandidate(
-      Number(r.distanceKm),
-      radiusKm,
-      map[r.providerId] || 0
-    ),
-    avgRating: map[r.providerId] || 0
-  }));
+  return rows.map(r=>{
+    const workerId=Number(r.workerId);
+    const weeklyEarnings=earnedMap[workerId]||0;
+    const earningsDeficit=Math.max(0,Math.min(1,(targetWeekly-weeklyEarnings)/targetWeekly));
+    const last=lastMap[workerId];
+    const idleHours=last?Math.max(0,(now-new Date(last).getTime())/3600000):168;
+    const idleScore=Math.min(1,idleHours/72);
+    const proximityScore=1-Math.min(Number(r.distanceKm)/Math.max(Number(radiusKm),0.1),1);
+    const score=0.4*idleScore+0.4*earningsDeficit+0.2*proximityScore;
+    return {...r,score,dispatch:{idleScore,earningsDeficit,proximityScore,weights:{idleTime:0.4,earningsDeficit:0.4,proximity:0.2}}};
+  }).sort((a,b)=>b.score-a.score);
 }
 
 module.exports = {

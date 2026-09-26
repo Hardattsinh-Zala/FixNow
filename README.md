@@ -85,3 +85,28 @@ The frontend no longer requires Mapbox/Turf, and the server no longer requires R
 ## Design direction
 
 The new interface uses an editorial, restrained visual system: generous whitespace, serif display typography, mono utility labels, thin rules, muted paper/ink tones, terracotta accents, and small motion cues. The intent is inspired by the clarity and refined minimalism of Mallard & Claret without reproducing their site.
+
+
+## SIH 26089 implementation update
+
+### Worker-owned dispatch
+- Worker accounts use the `WORKER` role and are created/maintained by the cooperative.
+- A worker receives live service-request events directly and can Accept/Pass from `/worker`.
+- Worker online status and browser geolocation are controlled by the worker. Location is refreshed while online and while active jobs are being tracked.
+- The cooperative dashboard is read-only for dispatch decisions: it monitors workers, requests, bookings and activity instead of accepting jobs for workers.
+
+### Day-based booking
+Time-slot inventory has been removed from the application flow. A booking stores a service `date`; the arrival window is coordinated after confirmation. The migration drops `TimeSlot` and the provider `slotInterval` field. `Booking.startTime` is retained as a nullable legacy column for safe migration of old records.
+
+### Pay-on-arrival price handshake
+1. Worker arrives and records the final scope price.
+2. Booking becomes `AWAITING_PAYMENT` with pricing state `PROPOSED`.
+3. Customer can Confirm price or Dispute price.
+4. Razorpay payment can be created only after customer confirmation (`AGREED`).
+5. Successful payment marks the booking paid/completed. This keeps the listed service price out of the transaction until the actual scope is known.
+
+### Reviews
+Only the authenticated customer attached to a completed booking can create its review. `Review.bookingId` is unique, enforcing one review per booking at the database level.
+
+### Government-verification readiness
+Worker profiles now have cooperative-managed e-Shram UAN and Skill India certificate fields plus a verification status. The system deliberately does **not** claim government verification without official credentials/API access. The cooperative can record evidence and later connect an authorised e-Shram/DigiLocker/Skill India integration.

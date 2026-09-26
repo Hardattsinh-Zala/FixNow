@@ -1,0 +1,15 @@
+const express=require("express");
+const router=express.Router();
+const auth=require("../middlewares/auth-filter");
+const role=require("../middlewares/role-filter");
+const c=require("../controllers/worker-controller");
+router.use(auth,role("WORKER"));
+router.get("/profile",c.getProfile);
+router.get("/requests",c.incoming);
+router.patch("/availability",c.setAvailability);
+router.post("/requests/:responseId/accept",c.acceptRequest);
+router.post("/requests/:responseId/decline",c.declineRequest);
+router.get("/bookings",c.myBookings);
+router.patch("/bookings/:id/arrive",c.arrive);
+router.patch("/bookings/:id/complete",c.complete);
+module.exports=router;

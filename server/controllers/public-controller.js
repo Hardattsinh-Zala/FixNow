@@ -33,32 +33,5 @@ const getProvider = async(req,res,next)=>{
 };
 
 
-const getPublicSlots=async(req,res,next)=>{
- try{
-  const providerId=Number(req.params.id),workerId=req.query.workerId?Number(req.query.workerId):null;
-  const rawDate=req.query.date; const date = rawDate
-  ? (() => { const [y,m,d] = String(rawDate).split("-").map(Number); return new Date(Date.UTC(y, m-1, d)) })()
-  : new Date(new Date().setUTCHours(0,0,0,0));
-  const provider=await prisma.provider.findUnique({where:{userId:providerId}});
-  if(!provider)return res.status(404).json({msg:"Provider not found."});
-  let slots=await prisma.timeSlot.findMany({where:{providerId,workerId,date},orderBy:{startTime:"asc"}});
-  if(!slots.length){
-   const toM=t=>{const [h,m]=t.split(":").map(Number);return h*60+m},fmt=m=>`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`;
-   const start=toM(provider.openingTime),end=toM(provider.closingTime),data=[];
-   for(let m=start;m<end;m+=provider.slotInterval)data.push({providerId,workerId,date,startTime:fmt(m),endTime:fmt(Math.min(m+provider.slotInterval,end))});
-   for(const row of data){
-  try {
-    await prisma.timeSlot.create({data:row});
-  } catch(err) {
-    console.error("slot create failed:", row, err.message);
-  }
-}
-   slots=await prisma.timeSlot.findMany({where:{providerId,workerId,date},orderBy:{startTime:"asc"}});
-  }
-  const bookings=await prisma.booking.findMany({where:{providerId,date,status:{notIn:["CANCELLED","COMPLETED","NO_SHOW"]},...(workerId?{workerId}:{})},include:{service:{select:{duration:true}}}});
-  const toM=t=>{const [h,m]=t.split(":").map(Number);return h*60+m};
-  res.json({slots:slots.map(slot=>{const a=toM(slot.startTime),b=toM(slot.endTime);const unavailable=slot.isBlocked||bookings.some(x=>{const s=toM(x.startTime),e=s+x.service.duration;return a<e&&b>s});return {...slot,available:!unavailable}})});
- }catch(e){next(e);}
-};
 
-module.exports={listProviders,getProvider,getPublicSlots};
+module.exports={listProviders,getProvider};
